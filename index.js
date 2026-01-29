@@ -1,11 +1,19 @@
 import express from "express";
 import admin from "firebase-admin";
-import serviceAccount from "./serviceAccountKey.json" assert { type: "json" };
 
 const app = express();
 app.use(express.json());
 
-// 🔐 Initialize Firebase Admin SDK
+/* -----------------------------------------
+   🔐 Firebase Admin Initialization (SAFE)
+------------------------------------------ */
+
+if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+  throw new Error("❌ FIREBASE_SERVICE_ACCOUNT env variable not set");
+}
+
+const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
 });
@@ -13,7 +21,10 @@ admin.initializeApp({
 const db = admin.firestore();
 const messaging = admin.messaging();
 
-// 🧪 TEST ENDPOINT
+/* -----------------------------------------
+   🧪 TEST NOTIFICATION (ADMIN ONLY)
+------------------------------------------ */
+
 app.get("/test", async (req, res) => {
   try {
     const adminDoc = await db
@@ -33,18 +44,24 @@ app.get("/test", async (req, res) => {
         title: "🧪 Test Notification",
         body: "Admin reminder backend is working 🚀",
       },
-      android: { priority: "high" },
+      android: {
+        priority: "high",
+      },
     });
 
-    res.send("✅ Test notification sent");
+    res.send("✅ Test notification sent to admin");
   } catch (error) {
-    console.error(error);
+    console.error("❌ Error sending notification:", error);
     res.status(500).send(error.message);
   }
 });
 
-// 🚀 Start server
-const PORT = 3000;
+/* -----------------------------------------
+   🚀 START SERVER
+------------------------------------------ */
+
+const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
