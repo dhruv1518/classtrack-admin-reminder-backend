@@ -2,7 +2,14 @@ import express from "express";
 import admin from "firebase-admin";
 import cron from "node-cron";
 
-// 🔐 Load Firebase credentials from ENV (Render-safe)
+// ------------------------------------------------
+// 🔐 LOAD FIREBASE FROM ENV (Render Safe)
+// ------------------------------------------------
+if (!process.env.FIREBASE_SERVICE_ACCOUNT) {
+  console.error("❌ FIREBASE_SERVICE_ACCOUNT env missing");
+  process.exit(1);
+}
+
 const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
 
 admin.initializeApp({
@@ -16,7 +23,19 @@ const app = express();
 app.use(express.json());
 
 // ------------------------------------------------
-// 🧪 TEST ENDPOINT (manual test)
+// ✅ HEALTH CHECK ENDPOINT (For UptimeRobot)
+// ------------------------------------------------
+app.get("/", (req, res) => {
+  res.status(200).send("Server alive");
+});
+
+// Optional cleaner health route
+app.get("/health", (req, res) => {
+  res.status(200).json({ status: "ok" });
+});
+
+// ------------------------------------------------
+// 🧪 TEST ENDPOINT (Manual FCM test only)
 // ------------------------------------------------
 app.get("/test", async (req, res) => {
   try {
@@ -40,9 +59,9 @@ app.get("/test", async (req, res) => {
       android: { priority: "high" },
     });
 
-    res.send("Test notification sent");
+    res.status(200).send("Test notification sent");
   } catch (err) {
-    console.error(err);
+    console.error("❌ Test error:", err.message);
     res.status(500).send(err.message);
   }
 });
@@ -56,9 +75,15 @@ cron.schedule("* * * * *", async () => {
   try {
     const now = admin.firestore.Timestamp.now();
 
+    // Optional: prevent very old burst spam (last 10 minutes only)
+    const tenMinutesAgo = admin.firestore.Timestamp.fromDate(
+      new Date(Date.now() - 10 * 60 * 1000)
+    );
+
     const snapshot = await db
       .collection("inquiries")
       .where("reminderSent", "==", false)
+      .where("reminderAt", ">=", tenMinutesAgo)
       .where("reminderAt", "<=", now)
       .get();
 
@@ -82,22 +107,24 @@ cron.schedule("* * * * *", async () => {
     for (const doc of snapshot.docs) {
       const data = doc.data();
 
-      // 🔔 Send notification
-      await messaging.send({
-        token,
-        notification: {
-          title: "📞 Inquiry Reminder",
-          body: `${data.name} • ${data.course}`,
-        },
-        android: { priority: "high" },
-      });
+      try {
+        await messaging.send({
+          token,
+          notification: {
+            title: "📞 Inquiry Reminder",
+            body: `${data.name} • ${data.course}`,
+          },
+          android: { priority: "high" },
+        });
 
-      // ✅ Mark as sent
-      await doc.ref.update({
-        reminderSent: true,
-      });
+        await doc.ref.update({
+          reminderSent: true,
+        });
 
-      console.log(`🔔 Reminder sent for ${data.name}`);
+        console.log(`🔔 Reminder sent for ${data.name}`);
+      } catch (err) {
+        console.error("❌ FCM send error:", err.message);
+      }
     }
   } catch (err) {
     console.error("❌ Cron error:", err.message);
@@ -108,6 +135,7 @@ cron.schedule("* * * * *", async () => {
 // 🚀 START SERVER
 // ------------------------------------------------
 const PORT = process.env.PORT || 10000;
+
 app.listen(PORT, () => {
   console.log(`🚀 Backend running on port ${PORT}`);
 });
